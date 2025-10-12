@@ -1,0 +1,39 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: docker
+    replica: a
+
+scrape_configs:
+  # Prometheus self
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  # Redis exporter
+  - job_name: "redis"
+    static_configs:
+      - targets: ["redis-exporter:9121"]
+
+  # Node exporter - local (WSL) and remote VPS
+  - job_name: "node"
+    static_configs:
+      - targets:
+          - "68.168.218.84:9100"     # VPS node-exporter
+
+  # cAdvisor - local containers and VPS containers
+  - job_name: "cadvisor"
+    static_configs:
+      - targets:
+          - "68.168.218.84:8085"     # VPS container metrics
+
+  # Thanos components (for long-term storage + queries)
+  - job_name: "thanos"
+    static_configs:
+      - targets:
+          - "thanos-sidecar:10902"
+          - "thanos-store:10902"
+          - "thanos-query:10902"
+
+

@@ -1,0 +1,202 @@
+version: "3.9"
+
+networks:
+  obsnet:
+
+volumes:
+  prom-data:
+  minio-data:
+  grafana-data:
+  thanos-store-data:
+
+services:
+  redis:
+    image: redis:7
+    container_name: redis
+    networks: [obsnet]
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["6379:6379"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: redis-exporter
+    networks: [obsnet]
+    depends_on: [redis]
+    command:
+      - "--redis.addr=redis://redis:6379"
+    ports: ["9121:9121"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "echo > /dev/tcp/127.0.0.1/9121 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: prometheus
+    networks: [obsnet]
+    depends_on: [redis-exporter]
+    volumes:
+      - ../configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=2d"
+      - "--web.enable-lifecycle"
+      - "--storage.tsdb.min-block-duration=2h"
+      - "--storage.tsdb.max-block-duration=2h"
+    ports: ["9090:9090"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-09-22T00-33-43Z
+    container_name: minio
+    networks: [obsnet]
+    environment:
+      - MINIO_ROOT_USER=minio
+      - MINIO_ROOT_PASSWORD=minio12345
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - minio-data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # Thanos sidecar attached to Prometheus
+  thanos-sidecar:
+    image: quay.io/thanos/thanos:v0.36.1
+    container_name: thanos-sidecar
+    user: "0"  # allow writing /prometheus/thanos.shipper.json
+    networks: [obsnet]
+    depends_on: [prometheus, minio]
+    volumes:
+      - prom-data:/prometheus
+      - ../configs/thanos/objstore.yaml:/etc/thanos/objstore.yaml:ro
+    command:
+      - sidecar
+      - --prometheus.url=http://prometheus:9090
+      - --tsdb.path=/prometheus
+      - --objstore.config-file=/etc/thanos/objstore.yaml
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:10902/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  thanos-store:
+    image: quay.io/thanos/thanos:v0.36.1
+    container_name: thanos-store
+    networks: [obsnet]
+    depends_on: [minio]
+    user: "0:0"  # write perms for /var/thanos/meta-syncer
+    volumes:
+      - ../configs/thanos/objstore.yaml:/etc/thanos/objstore.yaml:ro
+      - thanos-store-data:/var/thanos
+    command:
+      - store
+      - --objstore.config-file=/etc/thanos/objstore.yaml
+      - --data-dir=/var/thanos
+      - --log.level=info
+      - --grpc-address=0.0.0.0:10901
+      - --http-address=0.0.0.0:10902
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:10902/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  thanos-query:
+    image: quay.io/thanos/thanos:v0.36.1
+    container_name: thanos-query
+    networks: [obsnet]
+    depends_on: [thanos-sidecar, thanos-store]
+    command:
+      - query
+      - --http-address=0.0.0.0:10902
+      - --grpc-address=0.0.0.0:10901
+      - --query.replica-label=replica
+      - --store=thanos-sidecar:10901
+      - --store=thanos-store:10901
+    ports: ["10902:10902"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:10902/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: grafana
+    networks: [obsnet]
+    depends_on: [thanos-query]
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports: ["3000:3000"]
+    restart: unless-stopped
+
+  # ✅ Fix: host-mounted node-exporter so WSL rootfs is visible
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: node-exporter
+    networks: [obsnet]
+    restart: unless-stopped
+    ports: ["9100:9100"]
+    command:
+      - '--path.rootfs=/host'
+      - '--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/lib/containers/.+|snap|init|mnt/wsl)($|/)'
+    volumes:
+      - '/:/host:ro,rslave'
+      - '/proc:/host/proc:ro'
+      - '/sys:/host/sys:ro'
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9100/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ✅ Container-level metrics for UP/DOWN and CPU/Mem
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.2
+    container_name: cadvisor
+    networks: [obsnet]
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports: ["8080:8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/metrics"]
+      interval: 15s
+      timeout: 5s
+      retries: 5

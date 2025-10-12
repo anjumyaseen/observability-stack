@@ -1,0 +1,33 @@
+# OS / Editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*.tmp
+*.log
+
+# Python virtualenvs
+venv/
+__pycache__/
+
+# Docker artifacts
+*.pid
+*.seed
+*.tar
+*.gz
+
+# Grafana/Prometheus data
+data/
+volumes/
+*.db
+*.sqlite
+
+# Local configuration overrides
+.env
+.env.local
+config/*.local.yml
+config/*.secret.yml
+
+# Internal documentation
+logs/
+docs/
