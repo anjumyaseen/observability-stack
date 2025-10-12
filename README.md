@@ -165,11 +165,11 @@ Create new jobs inside Prometheus config to scrape any `/metrics` endpoint.
 
 ---
 
-## 📸 Screenshot Placeholder
+<img width="404" height="427" alt="signin" src="https://github.com/user-attachments/assets/53d82260-4939-439e-ab0a-444a8c80d087" />
 
-> 🖼️ _Insert your dashboard screenshot here_
-> 
-> (e.g., `docs/screenshots/dashboard.png`)
+<img width="1915" height="906" alt="Screenshot 2025-10-12 181319" src="https://github.com/user-attachments/assets/8c2356d5-11b7-4532-b198-2e34ff8d01ef" />
+
+
 
 ---
 
