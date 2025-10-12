@@ -16,17 +16,17 @@ scrape_configs:
     static_configs:
       - targets: ["redis-exporter:9121"]
 
-  # Node exporter - local (WSL) and remote VPS
+  # Node exporter - Server
   - job_name: "node"
     static_configs:
       - targets:
-          - "68.168.218.84:9100"     # VPS node-exporter
+          - "<IP_ADDR>:9100"     # Server node-exporter
 
-  # cAdvisor - local containers and VPS containers
+  # cAdvisor - Containers
   - job_name: "cadvisor"
     static_configs:
       - targets:
-          - "68.168.218.84:8085"     # VPS container metrics
+          - "<IP_ADDR>:8085"     # container metrics
 
   # Thanos components (for long-term storage + queries)
   - job_name: "thanos"
