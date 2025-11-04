@@ -1,0 +1,12 @@
+# Copy this file to vps.yml and replace the placeholder hostnames with your actual exporters.
+# vps.yml is gitignored so you can keep real IP addresses locally.
+
+- labels:
+    job: vps-node
+  targets:
+    - your-vps-ip:9100
+
+- labels:
+    job: vps-cadvisor
+  targets:
+    - your-vps-ip:8080

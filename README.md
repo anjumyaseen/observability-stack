@@ -19,6 +19,15 @@ It’s built for portability — running locally (e.g., WSL2, Docker Desktop) or
 
 ---
 
+## 🔄 Update Log
+
+- 2025-11-03: Consolidated the stack into `docker/docker-compose.observability.yml`, added a shared Caddy reverse proxy (`configs/caddy/`), and routed Grafana/Prometheus/Thanos/MinIO via `*.localhost` hostnames.
+- 2025-11-03: Reintroduced explicit names with an `observability-*` prefix so every container is easy to identify (e.g., `observability-prometheus`).
+- 2025-11-03: Relaxed the node-exporter root mount to work on Docker Desktop / WSL (removed `rslave` requirement).
+- 2025-11-03: Added `configs/prometheus/targets/vps.sample.yml` and moved real targets to `file_sd` (copy to `vps.yml`) so remote IPs stay local-only.
+
+---
+
 ## 🧩 Diagram
 
 ```
@@ -55,12 +64,21 @@ It’s built for portability — running locally (e.g., WSL2, Docker Desktop) or
 ```
 observability-stack/
 ├── configs
+│   ├── caddy
+│   │   ├── Caddyfile
+│   │   └── conf.d/
+│   │       └── observability.caddy
 │   ├── prometheus
-│   │   └── prometheus.yml
+│   │   ├── prometheus.yml
+│   │   └── targets/
+│   │       ├── README.md
+│   │       └── vps.sample.yml
 │   └── thanos
 │       └── objstore.yaml
+├── dashboards
+│   └── containers-status.json
 ├── docker
-│   └── compose.redis.yml
+│   └── docker-compose.observability.yml
 └── scripts
     └── seed_redis.sh
 ```
@@ -69,32 +87,52 @@ observability-stack/
 
 ## 🧱 Core Services
 
-| Service | Description | Port | Credentials / Notes |
-|----------|--------------|------|---------------------|
-| **Prometheus** | Core metrics collection and scraping | `9090` | Configured via `configs/prometheus/prometheus.yml` |
-| **Grafana** | Dashboards and visualizations | `3000` | Default login: `admin / admin` |
-| **Redis** | Example data source for metrics | `6379` | No auth by default |
-| **Redis Exporter** | Exposes Redis metrics to Prometheus | `9121` | Targets Redis automatically |
-| **Node Exporter** | Exposes host (CPU, memory, disk, network) metrics | `9100` | Runs on VPS |
-| **cAdvisor** | Monitors Docker containers (CPU, memory, FS, network) | `8085` | Used for container status |
-| **Thanos** | Prometheus federation, long-term storage | `10902` | Connects multiple Prometheus nodes |
-| **Watchtower** | Auto-updates running Docker images | `8080` | Optional component |
+| Service | Description | Access | Credentials / Notes |
+|----------|--------------|--------|---------------------|
+| **Caddy** | Shared reverse proxy for observability + other projects | `http(s)://*.localhost` | Configured via `configs/caddy/`, publishes network `reverse-proxy` |
+| **Prometheus** | Core metrics collection and scraping | `http://prometheus.localhost` | Configure local targets in `prometheus.yml`; copy `configs/prometheus/targets/vps.sample.yml` → `vps.yml` for remote IPs |
+| **Grafana** | Dashboards and visualizations | `http://grafana.localhost` | Default login: `admin / admin` |
+| **Thanos Query** | Unified long-term + live metrics API | `http://thanos.localhost` | Fan-in for sidecar + store |
+| **MinIO Console** | Browser UI for MinIO object storage | `http://minio.localhost` | Login: `admin / password` |
+| **MinIO API** | S3-compatible endpoint for metrics storage | `http://minio-api.localhost` | Use same MinIO credentials |
+| **Redis** | Example data source for metrics | `redis:6379` (internal) | No auth by default |
+| **Redis Exporter** | Exposes Redis metrics to Prometheus | `redis-exporter:9121` (internal) | Targets Redis automatically |
+| **Node Exporter** | Exposes host (CPU, memory, disk, network) metrics | `node-exporter:9100` (internal) | Scraped by Prometheus |
+| **cAdvisor** | Monitors Docker containers (CPU, memory, FS, network) | `http://cadvisor.localhost` | Exposed through Caddy |
 
 ---
 
 ## ⚙️ How to Run
 
-### 1️⃣ Start the stack
+### 1️⃣ (Optional) Point Prometheus at remote exporters
 ```bash
-cd docker
-docker compose -f compose.redis.yml up -d
+cp configs/prometheus/targets/vps.sample.yml configs/prometheus/targets/vps.yml
+```
+Edit `vps.yml` and replace `your-vps-ip` with the real address(es) of your node-exporter and cAdvisor instances. The file is gitignored on purpose so secrets stay local. You can reload Prometheus at any time with:
+```bash
+curl -X POST http://prometheus.localhost/-/reload
 ```
 
-### 2️⃣ Access Dashboards
-- Grafana → [http://localhost:3000](http://localhost:3000)
-- Prometheus → [http://localhost:9090](http://localhost:9090)
-- cAdvisor → [http://localhost:8085](http://localhost:8085)
-- Node Exporter → [http://localhost:9100](http://localhost:9100)
+### 2️⃣ Start or stop the entire stack
+```bash
+docker compose -f docker/docker-compose.observability.yml up -d
+docker compose -f docker/docker-compose.observability.yml down
+```
+
+### 3️⃣ Access Dashboards & APIs via Caddy
+- Grafana → [http://grafana.localhost](http://grafana.localhost)
+- Prometheus → [http://prometheus.localhost](http://prometheus.localhost)
+- Thanos Query → [http://thanos.localhost](http://thanos.localhost)
+- MinIO Console → [http://minio.localhost](http://minio.localhost)
+- MinIO API (S3) → [http://minio-api.localhost](http://minio-api.localhost)
+- cAdvisor → [http://cadvisor.localhost](http://cadvisor.localhost)
+
+### 4️⃣ Verify scrapes (especially remote `vps` targets)
+- Prometheus UI → **Status ▸ Targets** should report `vps-node` and `vps-cadvisor` as `UP`.
+- CLI check:
+  ```bash
+  curl -s http://prometheus.localhost/api/v1/targets | grep '"job":"vps'
+  ```
 
 ---
 
@@ -108,9 +146,16 @@ docker compose -f compose.redis.yml up -d
 ### 🟢 Example Query: Container Uptime
 ```promql
 (time()
- - max by (name) (container_last_seen{job="cadvisor", instance="68.168.218.84:8085", image!=""})
+ - max by (name) (container_last_seen{job="cadvisor", instance="cadvisor:8080", image!=""})
 ) < bool 60
 ```
+
+---
+
+## 📈 Saved Dashboards
+
+- `dashboards/containers-status.json` captures the container-status board shown above. Import it via **Grafana → Dashboards → New → Import → Upload JSON** and choose the Prometheus/Thanos datasource when prompted.
+- Export your own dashboards the same way and keep the JSON beside it so future setups are a one-click import.
 
 ---
 
@@ -120,7 +165,10 @@ docker compose -f compose.redis.yml up -d
 |------------|--------------|-------|
 | Prometheus | `configs/prometheus/prometheus.yml` | Targets for exporters |
 | Thanos | `configs/thanos/objstore.yaml` | Object storage connection |
-| Docker Compose | `docker/compose.redis.yml` | Service orchestration |
+| Remote targets | `configs/prometheus/targets/vps.sample.yml` | Copy to `vps.yml` locally to avoid committing real IPs |
+| Caddy | `configs/caddy/` | Reverse proxy entrypoints (`*.caddy` files) |
+| Docker Compose | `docker/docker-compose.observability.yml` | Single command to start/stop entire stack |
+| Grafana dashboards | `dashboards/` | Import JSON from Grafana → Dashboards → Import |
 | Scripts | `scripts/` | Helper automation utilities |
 
 
@@ -149,6 +197,23 @@ curl -X POST http://localhost:9090/-/reload
 
 ### ➕ Add APIs or Custom Metrics
 Create new jobs inside Prometheus config to scrape any `/metrics` endpoint.
+
+### ➕ Add Other Projects Behind Caddy
+1. Attach the new service to the shared `reverse-proxy` network in its own compose file:
+   ```yaml
+   networks:
+     reverse-proxy:
+       external: true
+       name: reverse-proxy
+   ```
+2. Drop a site definition (for example `my-app.caddy`) into `configs/caddy/conf.d/` that reverse proxies to the service container name.
+3. Reload Caddy so it reads the new site: `docker compose -f docker/docker-compose.observability.yml restart caddy`.
+
+All `*.localhost` hostnames resolve to `127.0.0.1`, so every project can get its own local domain without touching `/etc/hosts`.
+
+### ⚠️ Node Exporter on Desktop Hosts
+- Docker Desktop (macOS/Windows) and some WSL distros don’t support `rslave` bind propagation, so the compose file mounts the host root as read-only without propagation. That keeps the container portable but means new host mount points may not appear instantly in metrics.
+- On pure Linux you can opt back into recursive mounts by editing `docker/docker-compose.observability.yml` to add `,rslave` and running `sudo mount --make-shared /` before `docker compose up`.
 
 ---
 

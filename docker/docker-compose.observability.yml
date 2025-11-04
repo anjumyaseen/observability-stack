@@ -1,22 +1,42 @@
-version: "3.9"
+name: observability-stack
 
 networks:
-  obsnet:
+  observability:
+    name: observability-internal
+  reverse-proxy:
+    name: reverse-proxy
 
 volumes:
   prom-data:
   minio-data:
   grafana-data:
   thanos-store-data:
+  caddy-data:
+  caddy-config:
 
 services:
+  caddy:
+    image: caddy:2.8.4
+    container_name: observability-caddy
+    restart: unless-stopped
+    networks:
+      - reverse-proxy
+      - observability
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../configs/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../configs/caddy/conf.d:/etc/caddy/conf.d:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
   redis:
     image: redis:7
-    container_name: redis
-    networks: [obsnet]
-    command: ["redis-server", "--appendonly", "yes"]
-    ports: ["6379:6379"]
+    container_name: observability-redis
     restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    networks: [observability]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -25,13 +45,12 @@ services:
 
   redis-exporter:
     image: oliver006/redis_exporter:v1.62.0
-    container_name: redis-exporter
-    networks: [obsnet]
+    container_name: observability-redis-exporter
+    restart: unless-stopped
     depends_on: [redis]
     command:
       - "--redis.addr=redis://redis:6379"
-    ports: ["9121:9121"]
-    restart: unless-stopped
+    networks: [observability]
     healthcheck:
       test: ["CMD-SHELL", "echo > /dev/tcp/127.0.0.1/9121 || exit 1"]
       interval: 15s
@@ -40,11 +59,13 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.55.1
-    container_name: prometheus
-    networks: [obsnet]
+    container_name: observability-prometheus
+    restart: unless-stopped
     depends_on: [redis-exporter]
+    networks: [observability]
     volumes:
       - ../configs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../configs/prometheus/targets:/etc/prometheus/targets:ro
       - prom-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -53,8 +74,6 @@ services:
       - "--web.enable-lifecycle"
       - "--storage.tsdb.min-block-duration=2h"
       - "--storage.tsdb.max-block-duration=2h"
-    ports: ["9090:9090"]
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"]
       interval: 15s
@@ -63,18 +82,15 @@ services:
 
   minio:
     image: quay.io/minio/minio:RELEASE.2024-09-22T00-33-43Z
-    container_name: minio
-    networks: [obsnet]
+    container_name: observability-minio
+    restart: unless-stopped
     environment:
       - MINIO_ROOT_USER=admin
       - MINIO_ROOT_PASSWORD=password
     command: ["server", "/data", "--console-address", ":9001"]
+    networks: [observability]
     volumes:
       - minio-data:/data
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/ready"]
       interval: 15s
@@ -82,13 +98,15 @@ services:
       retries: 10
       start_period: 30s
 
-  # Thanos sidecar attached to Prometheus
   thanos-sidecar:
     image: quay.io/thanos/thanos:v0.36.1
-    container_name: thanos-sidecar
-    user: "0"  # allow writing /prometheus/thanos.shipper.json
-    networks: [obsnet]
-    depends_on: [prometheus, minio]
+    container_name: observability-thanos-sidecar
+    restart: unless-stopped
+    user: "0"
+    depends_on:
+      - prometheus
+      - minio
+    networks: [observability]
     volumes:
       - prom-data:/prometheus
       - ../configs/thanos/objstore.yaml:/etc/thanos/objstore.yaml:ro
@@ -99,7 +117,6 @@ services:
       - --objstore.config-file=/etc/thanos/objstore.yaml
       - --grpc-address=0.0.0.0:10901
       - --http-address=0.0.0.0:10902
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:10902/-/healthy"]
       interval: 15s
@@ -108,10 +125,11 @@ services:
 
   thanos-store:
     image: quay.io/thanos/thanos:v0.36.1
-    container_name: thanos-store
-    networks: [obsnet]
+    container_name: observability-thanos-store
+    restart: unless-stopped
+    user: "0:0"
     depends_on: [minio]
-    user: "0:0"  # write perms for /var/thanos/meta-syncer
+    networks: [observability]
     volumes:
       - ../configs/thanos/objstore.yaml:/etc/thanos/objstore.yaml:ro
       - thanos-store-data:/var/thanos
@@ -122,7 +140,6 @@ services:
       - --log.level=info
       - --grpc-address=0.0.0.0:10901
       - --http-address=0.0.0.0:10902
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:10902/-/healthy"]
       interval: 15s
@@ -131,9 +148,12 @@ services:
 
   thanos-query:
     image: quay.io/thanos/thanos:v0.36.1
-    container_name: thanos-query
-    networks: [obsnet]
-    depends_on: [thanos-sidecar, thanos-store]
+    container_name: observability-thanos-query
+    restart: unless-stopped
+    depends_on:
+      - thanos-sidecar
+      - thanos-store
+    networks: [observability]
     command:
       - query
       - --http-address=0.0.0.0:10902
@@ -141,8 +161,6 @@ services:
       - --query.replica-label=replica
       - --store=thanos-sidecar:10901
       - --store=thanos-store:10901
-    ports: ["10902:10902"]
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:10902/-/healthy"]
       interval: 15s
@@ -151,28 +169,26 @@ services:
 
   grafana:
     image: grafana/grafana:11.2.0
-    container_name: grafana
-    networks: [obsnet]
+    container_name: observability-grafana
+    restart: unless-stopped
     depends_on: [thanos-query]
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+    networks: [observability]
     volumes:
       - grafana-data:/var/lib/grafana
-    ports: ["3000:3000"]
-    restart: unless-stopped
 
   node-exporter:
     image: prom/node-exporter:v1.8.2
-    container_name: node-exporter
-    networks: [obsnet]
+    container_name: observability-node-exporter
     restart: unless-stopped
-    ports: ["9100:9100"]
+    networks: [observability]
     command:
       - '--path.rootfs=/host'
       - '--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/lib/containers/.+|snap|init|mnt/wsl)($|/)'
     volumes:
-      - '/:/host:ro,rslave'
+      - '/:/host:ro'
       - '/proc:/host/proc:ro'
       - '/sys:/host/sys:ro'
     healthcheck:
@@ -181,18 +197,17 @@ services:
       timeout: 5s
       retries: 5
 
- cadvisor:
+  cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.47.2
-    container_name: cadvisor
-    networks: [obsnet]
+    container_name: observability-cadvisor
     restart: unless-stopped
     privileged: true
+    networks: [observability]
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
-    ports: ["8080:8080"]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/metrics"]
       interval: 15s

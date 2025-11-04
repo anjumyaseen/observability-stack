@@ -31,3 +31,4 @@ config/*.secret.yml
 # Internal documentation
 logs/
 docs/
+configs/prometheus/targets/vps.yml

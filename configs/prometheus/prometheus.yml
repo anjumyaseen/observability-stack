@@ -16,17 +16,26 @@ scrape_configs:
     static_configs:
       - targets: ["redis-exporter:9121"]
 
-  # Node exporter - Server
+  # Node exporter - Server (local stack)
   - job_name: "node"
     static_configs:
       - targets:
-          - "<IP_ADDR>:9100"     # Server node-exporter
+          - "node-exporter:9100"
 
   # cAdvisor - Containers
   - job_name: "cadvisor"
     static_configs:
       - targets:
-          - "<IP_ADDR>:8085"     # container metrics
+          - "cadvisor:8080"
+
+  # Remote VPS exporters are managed via file-based service discovery.
+  #  - Copy `configs/prometheus/targets/vps.sample.yml` to `vps.yml`
+  #  - Populate the actual IPs/ports locally (vps.yml is gitignored)
+  - job_name: "vps"
+    file_sd_configs:
+      - files:
+          - "/etc/prometheus/targets/vps.yml"
+        refresh_interval: 30s
 
   # Thanos components (for long-term storage + queries)
   - job_name: "thanos"
@@ -35,5 +44,3 @@ scrape_configs:
           - "thanos-sidecar:10902"
           - "thanos-store:10902"
           - "thanos-query:10902"
-
-
