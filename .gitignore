@@ -32,3 +32,4 @@ config/*.secret.yml
 logs/
 docs/
 configs/prometheus/targets/vps.yml
+dashboards/
