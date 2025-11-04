@@ -91,10 +91,10 @@ observability-stack/
 |----------|--------------|--------|---------------------|
 | **Caddy** | Shared reverse proxy for observability + other projects | `http(s)://*.localhost` | Configured via `configs/caddy/`, publishes network `reverse-proxy` |
 | **Prometheus** | Core metrics collection and scraping | `http://prometheus.localhost` | Configure local targets in `prometheus.yml`; copy `configs/prometheus/targets/vps.sample.yml` → `vps.yml` for remote IPs |
-| **Grafana** | Dashboards and visualizations | `http://grafana.localhost` | Default login: `admin / admin` |
+| **Grafana** | Dashboards and visualizations | `http://grafana.localhost` | Default login `admin / admin` (change on first sign-in) |
 | **Thanos Query** | Unified long-term + live metrics API | `http://thanos.localhost` | Fan-in for sidecar + store |
-| **MinIO Console** | Browser UI for MinIO object storage | `http://minio.localhost` | Login: `admin / password` |
-| **MinIO API** | S3-compatible endpoint for metrics storage | `http://minio-api.localhost` | Use same MinIO credentials |
+| **MinIO Console** | Browser UI for MinIO object storage | `http://minio.localhost` | Default login `admin / password` (rotate immediately if exposed) |
+| **MinIO API** | S3-compatible endpoint for metrics storage | `http://minio-api.localhost` | Uses the same MinIO credentials |
 | **Redis** | Example data source for metrics | `redis:6379` (internal) | No auth by default |
 | **Redis Exporter** | Exposes Redis metrics to Prometheus | `redis-exporter:9121` (internal) | Targets Redis automatically |
 | **Node Exporter** | Exposes host (CPU, memory, disk, network) metrics | `node-exporter:9100` (internal) | Scraped by Prometheus |
@@ -142,20 +142,6 @@ docker compose -f docker/docker-compose.observability.yml down
 - Displays container **Status (UP/DOWN)** from cAdvisor.
 - Shows host CPU, RAM, and Disk usage via Node Exporter.
 - Uses instant queries with color-coded UP/DOWN states.
-
-### 🟢 Example Query: Container Uptime
-```promql
-(time()
- - max by (name) (container_last_seen{job="cadvisor", instance="cadvisor:8080", image!=""})
-) < bool 60
-```
-
----
-
-## 📈 Saved Dashboards
-
-- `dashboards/containers-status.json` captures the container-status board shown above. Import it via **Grafana → Dashboards → New → Import → Upload JSON** and choose the Prometheus/Thanos datasource when prompted.
-- Export your own dashboards the same way and keep the JSON beside it so future setups are a one-click import.
 
 ---
 
