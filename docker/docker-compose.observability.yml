@@ -85,8 +85,8 @@ services:
     container_name: observability-minio
     restart: unless-stopped
     environment:
-      - MINIO_ROOT_USER=admin
-      - MINIO_ROOT_PASSWORD=password
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
     command: ["server", "/data", "--console-address", ":9001"]
     networks: [observability]
     volumes:
@@ -173,8 +173,8 @@ services:
     restart: unless-stopped
     depends_on: [thanos-query]
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:?Set GF_SECURITY_ADMIN_PASSWORD in .env}
     networks: [observability]
     volumes:
       - grafana-data:/var/lib/grafana

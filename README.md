@@ -25,6 +25,7 @@ It’s built for portability — running locally (e.g., WSL2, Docker Desktop) or
 - 2025-11-03: Reintroduced explicit names with an `observability-*` prefix so every container is easy to identify (e.g., `observability-prometheus`).
 - 2025-11-03: Relaxed the node-exporter root mount to work on Docker Desktop / WSL (removed `rslave` requirement).
 - 2025-11-03: Added `configs/prometheus/targets/vps.sample.yml` and moved real targets to `file_sd` (copy to `vps.yml`) so remote IPs stay local-only.
+- 2025-11-03: Externalized Grafana/MinIO credentials via `.env` (see `.env.example`) so secrets never land in git.
 
 ---
 
@@ -63,6 +64,7 @@ It’s built for portability — running locally (e.g., WSL2, Docker Desktop) or
 
 ```
 observability-stack/
+├── .env.example
 ├── configs
 │   ├── caddy
 │   │   ├── Caddyfile
@@ -91,9 +93,9 @@ observability-stack/
 |----------|--------------|--------|---------------------|
 | **Caddy** | Shared reverse proxy for observability + other projects | `http(s)://*.localhost` | Configured via `configs/caddy/`, publishes network `reverse-proxy` |
 | **Prometheus** | Core metrics collection and scraping | `http://prometheus.localhost` | Configure local targets in `prometheus.yml`; copy `configs/prometheus/targets/vps.sample.yml` → `vps.yml` for remote IPs |
-| **Grafana** | Dashboards and visualizations | `http://grafana.localhost` | Default login `admin / admin` (change on first sign-in) |
+| **Grafana** | Dashboards and visualizations | `http://grafana.localhost` | Credentials from `.env` (`GF_SECURITY_ADMIN_*`), change after first sign-in |
 | **Thanos Query** | Unified long-term + live metrics API | `http://thanos.localhost` | Fan-in for sidecar + store |
-| **MinIO Console** | Browser UI for MinIO object storage | `http://minio.localhost` | Default login `admin / password` (rotate immediately if exposed) |
+| **MinIO Console** | Browser UI for MinIO object storage | `http://minio.localhost` | Credentials from `.env` (`MINIO_ROOT_*`), rotate immediately if exposed |
 | **MinIO API** | S3-compatible endpoint for metrics storage | `http://minio-api.localhost` | Uses the same MinIO credentials |
 | **Redis** | Example data source for metrics | `redis:6379` (internal) | No auth by default |
 | **Redis Exporter** | Exposes Redis metrics to Prometheus | `redis-exporter:9121` (internal) | Targets Redis automatically |
@@ -104,7 +106,13 @@ observability-stack/
 
 ## ⚙️ How to Run
 
-### 1️⃣ (Optional) Point Prometheus at remote exporters
+### 1️⃣ Prepare secrets
+```bash
+cp .env.example .env
+```
+Edit `.env` with secure values for MinIO and Grafana before starting the stack.
+
+### 2️⃣ (Optional) Point Prometheus at remote exporters
 ```bash
 cp configs/prometheus/targets/vps.sample.yml configs/prometheus/targets/vps.yml
 ```
@@ -113,13 +121,13 @@ Edit `vps.yml` and replace `your-vps-ip` with the real address(es) of your node-
 curl -X POST http://prometheus.localhost/-/reload
 ```
 
-### 2️⃣ Start or stop the entire stack
+### 3️⃣ Start or stop the entire stack
 ```bash
 docker compose -f docker/docker-compose.observability.yml up -d
 docker compose -f docker/docker-compose.observability.yml down
 ```
 
-### 3️⃣ Access Dashboards & APIs via Caddy
+### 4️⃣ Access Dashboards & APIs via Caddy
 - Grafana → [http://grafana.localhost](http://grafana.localhost)
 - Prometheus → [http://prometheus.localhost](http://prometheus.localhost)
 - Thanos Query → [http://thanos.localhost](http://thanos.localhost)
@@ -127,7 +135,7 @@ docker compose -f docker/docker-compose.observability.yml down
 - MinIO API (S3) → [http://minio-api.localhost](http://minio-api.localhost)
 - cAdvisor → [http://cadvisor.localhost](http://cadvisor.localhost)
 
-### 4️⃣ Verify scrapes (especially remote `vps` targets)
+### 5️⃣ Verify scrapes (especially remote `vps` targets)
 - Prometheus UI → **Status ▸ Targets** should report `vps-node` and `vps-cadvisor` as `UP`.
 - CLI check:
   ```bash
