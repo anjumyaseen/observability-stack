@@ -77,8 +77,6 @@ observability-stack/
 │   │       └── vps.sample.yml
 │   └── thanos
 │       └── objstore.yaml
-├── dashboards
-│   └── containers-status.json
 ├── docker
 │   └── docker-compose.observability.yml
 └── scripts
